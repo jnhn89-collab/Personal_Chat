@@ -3,6 +3,8 @@ import requests
 import json
 import uuid
 import os
+import html
+import re
 
 # ==========================================
 # [사용자 설정] 비밀번호 및 파일 설정
@@ -18,81 +20,105 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# --- 2. 스타일링 (UI 레이아웃 고정) ---
+# --- 2. 스타일링 및 자바스크립트 (복사 기능 핵심) ---
 st.markdown("""
+<script>
+    function copyToClipboard(text, mode, btnId) {
+        let copyText = text;
+        
+        if (mode === 'txt') {
+            // 마크다운 문법 제거 (Regex)
+            copyText = copyText
+                .replace(/\\*\\*(.*?)\\*\\*/g, '$1') // Bold
+                .replace(/__(.*?)__/g, '$1')       // Bold
+                .replace(/\\*(.*?)\\*/g, '$1')       // Italic
+                .replace(/_(.*?)_/g, '$1')         // Italic
+                .replace(/`([^`]+)`/g, '$1')       // Inline Code
+                .replace(/\\[([^\\]]+)\\]\\([^\\)]+\\)/g, '$1') // Links
+                .replace(/#+\\s/g, '')             // Headers
+                .replace(/\\n/g, '\\n');           // Newlines (Keep)
+        }
+
+        navigator.clipboard.writeText(copyText).then(function() {
+            // 성공 시 버튼 텍스트 변경 피드백
+            const btn = document.getElementById(btnId);
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '✅';
+            setTimeout(() => { btn.innerHTML = originalText; }, 1500);
+        }, function(err) {
+            console.error('Copy failed', err);
+        });
+    }
+</script>
 <style>
-    /* 1. 전체 레이아웃 & 색상 */
+    /* 1. 기본 레이아웃 */
     .stApp { background-color: #ffffff; color: #1e293b; }
     [data-testid="stSidebar"] { background-color: #f8fafc; border-right: 1px solid #e2e8f0; }
     
-    /* 2. 상단 탭바 고정 (Sticky) */
+    /* 2. 탭바 고정 */
     .stTabs [data-baseweb="tab-list"] { 
-        position: sticky;
-        top: 2.5rem; /* 헤더 높이만큼 띄움 */
-        z-index: 999;
-        background-color: #ffffff;
-        padding-top: 5px;
-        padding-bottom: 5px;
-        margin-bottom: 0px;
-        border-bottom: 1px solid #f1f5f9;
+        position: sticky; top: 2.5rem; z-index: 999; background-color: #ffffff;
+        padding: 5px 0; border-bottom: 1px solid #f1f5f9;
     }
-
-    /* 3. Expander (이름 변경) 고정 (Sticky) */
-    /* 탭 바로 아래에 붙도록 설정 */
-    .streamlit-expanderHeader {
-        position: sticky;
-        top: 6rem; /* 탭바 아래 위치 */
-        z-index: 998;
-        background-color: #ffffff !important;
-        border-bottom: 1px solid #f0f0f0;
-    }
-    .streamlit-expanderContent {
-        background-color: #ffffff;
-        border-bottom: 1px solid #f0f0f0;
-    }
-
-    /* 탭 스타일 */
     .stTabs [data-baseweb="tab"] {
-        height: 45px;
-        background-color: #f8fafc;
-        border-radius: 6px 6px 0px 0px;
-        color: #64748b;
-        font-weight: 600;
-        font-size: 0.9em;
-        padding: 0 16px;
-        border: 1px solid transparent;
+        height: 45px; background-color: #f8fafc; color: #64748b; font-weight: 600; padding: 0 16px;
     }
     .stTabs [aria-selected="true"] {
-        background-color: #ffffff !important;
-        color: #2563eb !important;
-        border: 1px solid #e2e8f0;
-        border-bottom: 1px solid #ffffff;
+        background-color: #ffffff !important; color: #2563eb !important; border: 1px solid #e2e8f0; border-bottom: 1px solid #ffffff;
     }
 
-    /* 채팅 메시지 스타일 */
+    /* 3. 채팅 메시지 및 복사 버튼 스타일 */
     [data-testid="stChatMessage"] { 
-        padding: 1rem; 
-        border-radius: 12px; 
-        margin-bottom: 12px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+        padding: 1rem; border-radius: 12px; margin-bottom: 12px; position: relative;
     }
-    div[data-testid="stChatMessage"]:nth-child(odd) { background-color: #eff6ff; border: 1px solid #dbeafe; } /* User */
-    div[data-testid="stChatMessage"]:nth-child(even) { background-color: #ffffff; border: 1px solid #e2e8f0; } /* AI */
-    
-    /* 입력창 스타일 */
+    /* AI 메시지 (흰색) */
+    div[data-testid="stChatMessage"]:nth-child(even) { 
+        background-color: #ffffff; border: 1px solid #e2e8f0; 
+    }
+    /* User 메시지 (파란색) */
+    div[data-testid="stChatMessage"]:nth-child(odd) { 
+        background-color: #eff6ff; border: 1px solid #dbeafe; 
+    }
+
+    /* 복사 버튼 컨테이너 (오른쪽 상단 플로팅) */
+    .copy-btn-container {
+        float: right;
+        display: flex;
+        gap: 4px;
+        margin-left: 10px;
+        margin-bottom: 5px;
+        opacity: 0.3; /* 평소엔 흐릿하게 */
+        transition: opacity 0.2s;
+    }
+    .copy-btn-container:hover {
+        opacity: 1; /* 마우스 올리면 선명하게 */
+    }
+
+    /* 복사 버튼 디자인 */
+    .copy-btn {
+        background-color: #f1f5f9;
+        border: 1px solid #cbd5e1;
+        color: #475569;
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 0.7rem;
+        cursor: pointer;
+        font-family: monospace;
+        transition: all 0.1s;
+    }
+    .copy-btn:hover {
+        background-color: #e2e8f0;
+        color: #0f172a;
+        border-color: #94a3b8;
+    }
+    .copy-btn:active {
+        transform: translateY(1px);
+    }
+
+    /* 입력창 및 기타 */
     .stTextInput > div > div > input { border-radius: 8px; border: 1px solid #cbd5e1; }
-    
-    /* 상단 헤더 영역 최소화 (여백 줄임) */
-    .block-container { 
-        padding-top: 1.5rem; 
-        padding-bottom: 5rem; /* 입력창 가림 방지 */
-    }
-    
-    /* 출처 박스 */
-    .source-box {
-        font-size: 0.75em; color: #64748b; background-color: #f8fafc;
-        padding: 8px 12px; border-radius: 6px; margin-top: 8px; border: 1px solid #e2e8f0;
-    }
+    .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
+    .source-box { font-size: 0.75em; color: #64748b; background-color: #f8fafc; padding: 8px; border-radius: 6px; margin-top: 8px; border: 1px solid #e2e8f0; }
     .source-box a { color: #3b82f6; text-decoration: none; }
 </style>
 """, unsafe_allow_html=True)
@@ -209,14 +235,12 @@ c1, c2 = st.columns([1, 1])
 with c1: st.markdown("### ❄️ Gemini Desktop")
 with c2: st.markdown(f"<div style='text-align:right; color:#94a3b8; font-size:0.8em; padding-top:10px;'>{selected_model_name}</div>", unsafe_allow_html=True)
 
-# 탭바
 tabs = st.tabs([s["title"] for s in st.session_state.sessions])
 
 for i, tab in enumerate(tabs):
     with tab:
         session = st.session_state.sessions[i]
         
-        # [고정] 이름 변경 (Sticky CSS 적용됨)
         with st.expander("Edit Tab Name", expanded=False):
             new_title = st.text_input("Title", value=session["title"], key=f"title_{session['id']}")
             if new_title != session["title"]:
@@ -224,17 +248,35 @@ for i, tab in enumerate(tabs):
                 save_history()
                 st.rerun()
 
-        # [스크롤] 채팅 영역 (높이 고정 550px)
-        # 이 높이를 넘어가면 박스 안에 스크롤이 생깁니다.
+        # 채팅 영역 (높이 고정)
         chat_container = st.container(height=550, border=False)
         
         with chat_container:
             if not session["messages"]: st.info("새로운 대화가 시작되었습니다.")
             
-            for msg in session["messages"]:
+            for idx, msg in enumerate(session["messages"]):
                 avatar = "🧑‍💻" if msg["role"] == "user" else "❄️"
                 with st.chat_message(msg["role"], avatar=avatar):
-                    st.markdown(msg["content"])
+                    # AI 메시지인 경우에만 복사 버튼 추가
+                    if msg["role"] == "assistant":
+                        # 텍스트 이스케이프 (JS 함수 전달용)
+                        safe_text = html.escape(msg["content"]).replace("\n", "\\n").replace("'", "\\'")
+                        btn_id_md = f"btn_md_{i}_{idx}"
+                        btn_id_txt = f"btn_txt_{i}_{idx}"
+                        
+                        # 버튼 HTML 생성 (CSS float:right 사용)
+                        copy_html = f"""
+                        <div class="copy-btn-container">
+                            <button id="{btn_id_md}" class="copy-btn" onclick="copyToClipboard('{safe_text}', 'md', '{btn_id_md}')">📋 MD</button>
+                            <button id="{btn_id_txt}" class="copy-btn" onclick="copyToClipboard('{safe_text}', 'txt', '{btn_id_txt}')">📝 TXT</button>
+                        </div>
+                        """
+                        # 버튼 + 마크다운 콘텐츠 렌더링
+                        st.markdown(copy_html + msg["content"], unsafe_allow_html=True)
+                    else:
+                        st.markdown(msg["content"])
+
+                    # 출처 표시
                     if "sources" in msg and msg["sources"]:
                         source_html = "<div class='source-box'>📚 <b>Source:</b><br>"
                         for src in msg["sources"]:
@@ -242,7 +284,7 @@ for i, tab in enumerate(tabs):
                         source_html += "</div>"
                         st.markdown(source_html, unsafe_allow_html=True)
 
-        # [고정] 입력창 (Streamlit Default Fixed Footer)
+        # 입력창
         if prompt := st.chat_input("Message...", key=f"input_{session['id']}"):
             if not st.session_state.api_key: st.stop()
 
@@ -291,13 +333,23 @@ for i, tab in enumerate(tabs):
                                 if "groundingChunks" in md:
                                     for c in md["groundingChunks"]:
                                         if "web" in c: sources.append(c["web"])
-
-                                ph.markdown(bot_text)
+                                
+                                # 실시간 렌더링 시에도 버튼 추가
+                                safe_text = html.escape(bot_text).replace("\n", "\\n").replace("'", "\\'")
+                                temp_btn_id = f"btn_temp_{uuid.uuid4()}"
+                                copy_html = f"""
+                                <div class="copy-btn-container">
+                                    <button class="copy-btn" onclick="copyToClipboard('{safe_text}', 'md', '{temp_btn_id}')">📋 MD</button>
+                                    <button class="copy-btn" onclick="copyToClipboard('{safe_text}', 'txt', '{temp_btn_id}')">📝 TXT</button>
+                                </div>
+                                """
+                                ph.markdown(copy_html + bot_text, unsafe_allow_html=True)
+                                
                                 if sources:
-                                    html = "<div class='source-box'>📚 <b>Source:</b><br>"
-                                    for s in sources: html += f"• <a href='{s.get('uri','#')}' target='_blank'>{s.get('title','Link')}</a><br>"
-                                    html += "</div>"
-                                    st.markdown(html, unsafe_allow_html=True)
+                                    html_src = "<div class='source-box'>📚 <b>Source:</b><br>"
+                                    for s in sources: html_src += f"• <a href='{s.get('uri','#')}' target='_blank'>{s.get('title','Link')}</a><br>"
+                                    html_src += "</div>"
+                                    st.markdown(html_src, unsafe_allow_html=True)
 
                                 session["messages"].append({"role": "assistant", "content": bot_text, "sources": sources})
                                 save_history()
