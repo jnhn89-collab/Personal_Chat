@@ -4,13 +4,13 @@ import json
 import uuid
 import os
 import base64
-import html
+import re
 
 # ==========================================
 # [사용자 설정] 
 # ==========================================
 ACCESS_PASSWORD = "153692525" 
-HISTORY_FILE = "system_log.dat" # 보안을 위해 확장자 위장
+HISTORY_FILE = "system_log.dat"
 
 # --- 1. 페이지 설정 ---
 st.set_page_config(
@@ -20,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# --- 2. 암호화/복호화 (XOR) ---
+# --- 2. 암호화/복호화 (파일 저장용) ---
 def encrypt_data(data_str, key):
     enc = []
     for i, c in enumerate(data_str):
@@ -41,47 +41,53 @@ def decrypt_data(enc_str, key):
     except:
         return ""
 
-# --- 3. 스타일링 & 자바스크립트 (핵심 수정됨) ---
+# --- 3. 핵심: Base64 클립보드 복사 스크립트 (가장 강력한 방법) ---
 st.markdown("""
 <script>
-    function copyContent(elementId, btnId, mode) {
-        // 1. 숨겨진 div에서 원본 텍스트 가져오기
-        const hiddenElement = document.getElementById(elementId);
-        if (!hiddenElement) {
-            console.error('Text element not found');
-            return;
-        }
-        
-        // textContent는 HTML 태그가 해석되지 않은 원본 텍스트를 가져옴
-        let textToCopy = hiddenElement.textContent;
+    async function copyBase64(b64text, btnId, mode) {
+        try {
+            // 1. Base64 디코딩 (한글 깨짐 방지 처리)
+            const binaryString = atob(b64text);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            const decoder = new TextDecoder('utf-8');
+            let text = decoder.decode(bytes);
 
-        // 2. TXT 모드일 경우 마크다운 제거 (Regex)
-        if (mode === 'txt') {
-            textToCopy = textToCopy
-                .replace(/^#+\s+/gm, '')           // Headers
-                .replace(/\*\*(.*?)\*\*/g, '$1')   // Bold
-                .replace(/__(.*?)__/g, '$1')       // Bold
-                .replace(/\*(.*?)\*/g, '$1')       // Italic
-                .replace(/_(.*?)_/g, '$1')         // Italic
-                .replace(/`([^`]+)`/g, '$1')       // Inline Code
-                .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Links [text](url) -> text
-                .replace(/```[\s\S]*?```/g, '[CODE BLOCK]') // Code blocks
-                .replace(/>\s?/g, '');             // Blockquotes
-        }
+            // 2. TXT 모드일 경우 마크다운 문법 제거
+            if (mode === 'txt') {
+                text = text
+                    .replace(/^#+\s+/gm, '')           // Headers
+                    .replace(/\*\*(.*?)\*\*/g, '$1')   // Bold
+                    .replace(/__(.*?)__/g, '$1')       // Bold
+                    .replace(/\*(.*?)\*/g, '$1')       // Italic
+                    .replace(/`([^`]+)`/g, '$1')       // Inline Code
+                    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Links
+                    .replace(/```[\s\S]*?```/g, '')    // Code blocks (제거)
+                    .replace(/>\s?/g, '');             // Blockquotes
+            }
 
-        // 3. 클립보드 복사
-        navigator.clipboard.writeText(textToCopy).then(function() {
-            const btn = document.getElementById(btnId);
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '✅';
-            btn.style.color = 'green';
-            setTimeout(() => { 
-                btn.innerHTML = originalText; 
-                btn.style.color = '#475569';
-            }, 1500);
-        }, function(err) {
-            console.error('Async: Could not copy text: ', err);
-        });
+            // 3. 클립보드에 쓰기
+            await navigator.clipboard.writeText(text);
+
+            // 4. 버튼 피드백 (이모지로 변경)
+            const btn = document.parent.document.getElementById(btnId) || document.getElementById(btnId);
+            if(btn){
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '✅ Copied!';
+                btn.style.color = '#10b981';
+                btn.style.borderColor = '#10b981';
+                setTimeout(() => { 
+                    btn.innerHTML = originalHtml; 
+                    btn.style.color = '#475569';
+                    btn.style.borderColor = '#cbd5e1';
+                }, 2000);
+            }
+        } catch (err) {
+            console.error('Copy failed:', err);
+            alert('복사에 실패했습니다. 브라우저 보안 설정을 확인하세요.');
+        }
     }
 </script>
 <style>
@@ -108,22 +114,24 @@ st.markdown("""
         justify-content: flex-end;
         gap: 5px;
         margin-bottom: 5px;
-        opacity: 0.2; /* 평소엔 흐릿 */
+        opacity: 0.4;
         transition: opacity 0.2s;
     }
     .copy-btn-wrapper:hover { opacity: 1; }
 
     .custom-copy-btn {
-        background-color: #f8fafc;
+        background-color: #ffffff;
         border: 1px solid #cbd5e1;
         border-radius: 4px;
-        font-size: 10px;
+        font-size: 11px;
         color: #475569;
         cursor: pointer;
-        padding: 2px 6px;
+        padding: 3px 8px;
         font-family: monospace;
+        font-weight: bold;
+        transition: all 0.2s;
     }
-    .custom-copy-btn:hover { background-color: #e2e8f0; color: #0f172a; }
+    .custom-copy-btn:hover { background-color: #f1f5f9; color: #0f172a; border-color: #94a3b8; }
 
     .block-container { padding-top: 1.5rem; padding-bottom: 5rem; }
     .source-box { font-size: 0.75em; color: #64748b; background-color: #f8fafc; padding: 8px; border-radius: 6px; }
@@ -258,23 +266,18 @@ for i, tab in enumerate(tabs):
                 avatar = "🧑‍💻" if msg["role"] == "user" else "🤖"
                 with st.chat_message(msg["role"], avatar=avatar):
                     
-                    # AI 메시지일 경우에만 복사 기능 활성화
                     if msg["role"] == "assistant":
-                        # 1. 고유 ID 생성
-                        content_id = f"content_{session['id']}_{idx}"
+                        # [핵심] 텍스트를 Base64로 인코딩하여 HTML 속성에 주입
+                        # 이 방식은 자바스크립트 문법 에러가 절대 발생하지 않습니다.
+                        b64_content = base64.b64encode(msg["content"].encode('utf-8')).decode('utf-8')
                         btn_md_id = f"btn_md_{session['id']}_{idx}"
                         btn_txt_id = f"btn_txt_{session['id']}_{idx}"
                         
-                        # 2. 숨겨진 Div에 원본 텍스트 저장 (HTML Escape 처리)
-                        # display: none으로 화면엔 안 보이지만 DOM에는 존재함
-                        safe_content = html.escape(msg["content"])
-                        
                         html_code = f"""
                         <div class="copy-btn-wrapper">
-                            <button id="{btn_md_id}" class="custom-copy-btn" onclick="copyContent('{content_id}', '{btn_md_id}', 'md')">📋 MD</button>
-                            <button id="{btn_txt_id}" class="custom-copy-btn" onclick="copyContent('{content_id}', '{btn_txt_id}', 'txt')">📝 TXT</button>
+                            <button id="{btn_md_id}" class="custom-copy-btn" onclick="copyBase64('{b64_content}', '{btn_md_id}', 'md')">📋 MD</button>
+                            <button id="{btn_txt_id}" class="custom-copy-btn" onclick="copyBase64('{b64_content}', '{btn_txt_id}', 'txt')">📝 TXT</button>
                         </div>
-                        <div id="{content_id}" style="display:none;">{safe_content}</div>
                         """
                         st.markdown(html_code, unsafe_allow_html=True)
                         st.markdown(msg["content"])
@@ -337,19 +340,17 @@ for i, tab in enumerate(tabs):
                                     for c in md["groundingChunks"]:
                                         if "web" in c: sources.append(c["web"])
 
-                                # 실시간 렌더링 시에도 버튼 로직 적용
+                                # 실시간 렌더링 시 Base64 적용
+                                b64_content = base64.b64encode(bot_text.encode('utf-8')).decode('utf-8')
                                 unique_id = str(uuid.uuid4())
-                                content_id = f"temp_content_{unique_id}"
                                 btn_md_id = f"temp_btn_md_{unique_id}"
                                 btn_txt_id = f"temp_btn_txt_{unique_id}"
-                                safe_content = html.escape(bot_text)
 
                                 html_code = f"""
                                 <div class="copy-btn-wrapper">
-                                    <button id="{btn_md_id}" class="custom-copy-btn" onclick="copyContent('{content_id}', '{btn_md_id}', 'md')">📋 MD</button>
-                                    <button id="{btn_txt_id}" class="custom-copy-btn" onclick="copyContent('{content_id}', '{btn_txt_id}', 'txt')">📝 TXT</button>
+                                    <button id="{btn_md_id}" class="custom-copy-btn" onclick="copyBase64('{b64_content}', '{btn_md_id}', 'md')">📋 MD</button>
+                                    <button id="{btn_txt_id}" class="custom-copy-btn" onclick="copyBase64('{b64_content}', '{btn_txt_id}', 'txt')">📝 TXT</button>
                                 </div>
-                                <div id="{content_id}" style="display:none;">{safe_content}</div>
                                 """
                                 ph.markdown(html_code + bot_text, unsafe_allow_html=True)
                                 
