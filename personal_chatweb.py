@@ -3,7 +3,7 @@ import requests
 import json
 import uuid
 
-# --- 1. 페이지 설정 (수정됨: 사이드바 기본 열림) ---
+# --- 1. 페이지 설정 ---
 st.set_page_config(
     page_title="Gemini Workspace",
     page_icon="❄️",
@@ -17,7 +17,7 @@ if "sessions" not in st.session_state:
 if "api_key" not in st.session_state:
     st.session_state.api_key = ""
 
-# --- 3. UI 스타일링 (헤더 숨김 코드 삭제됨) ---
+# --- 3. UI 스타일링 (스크롤바 디자인 추가) ---
 st.markdown("""
 <style>
     /* 전체 배경 화이트 */
@@ -74,7 +74,8 @@ st.markdown("""
     
     /* 상단 여백 줄이기 */
     .block-container {
-        padding-top: 2rem;
+        padding-top: 1rem;
+        padding-bottom: 0rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -188,8 +189,12 @@ for i, tab in enumerate(tabs):
                 session["title"] = new_title
                 st.rerun()
 
-        # 채팅 표시 영역
-        chat_container = st.container()
+        # ============================================================
+        # [핵심 변경] 채팅 영역을 고정 높이 컨테이너로 감싸서 내부 스크롤 적용
+        # height=650: 데스크탑 화면에 적절한 높이 (조절 가능)
+        # ============================================================
+        chat_container = st.container(height=650, border=False)
+        
         with chat_container:
             if not session["messages"]:
                 st.info("대화를 시작하세요. (설정은 왼쪽 사이드바 👈)")
@@ -199,7 +204,7 @@ for i, tab in enumerate(tabs):
                 with st.chat_message(msg["role"], avatar=avatar):
                     st.markdown(msg["content"])
 
-        # 입력창
+        # 입력창 (컨테이너 밖, 탭 하단에 고정됨)
         if prompt := st.chat_input("Message Gemini...", key=f"input_{session['id']}"):
             if not st.session_state.api_key:
                 st.error("왼쪽 사이드바에서 API Key를 먼저 입력해주세요.")
