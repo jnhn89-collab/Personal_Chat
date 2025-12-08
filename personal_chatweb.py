@@ -9,7 +9,7 @@ import re
 # ==========================================
 # [사용자 설정] 
 # ==========================================
-ACCESS_PASSWORD = "153692525" 
+ACCESS_PASSWORD = "1qa2ws3ed" 
 HISTORY_FILE = "system_log.dat"
 
 # --- 1. 페이지 설정 ---
