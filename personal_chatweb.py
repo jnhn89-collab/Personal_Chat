@@ -41,12 +41,11 @@ def decrypt_data(enc_str, key):
     except:
         return ""
 
-# --- 3. 핵심: Base64 클립보드 복사 스크립트 (가장 강력한 방법) ---
+# --- 3. 핵심: Base64 클립보드 복사 스크립트 ---
 st.markdown("""
 <script>
     async function copyBase64(b64text, btnId, mode) {
         try {
-            // 1. Base64 디코딩 (한글 깨짐 방지 처리)
             const binaryString = atob(b64text);
             const bytes = new Uint8Array(binaryString.length);
             for (let i = 0; i < binaryString.length; i++) {
@@ -55,23 +54,20 @@ st.markdown("""
             const decoder = new TextDecoder('utf-8');
             let text = decoder.decode(bytes);
 
-            // 2. TXT 모드일 경우 마크다운 문법 제거
             if (mode === 'txt') {
                 text = text
-                    .replace(/^#+\s+/gm, '')           // Headers
-                    .replace(/\*\*(.*?)\*\*/g, '$1')   // Bold
-                    .replace(/__(.*?)__/g, '$1')       // Bold
-                    .replace(/\*(.*?)\*/g, '$1')       // Italic
-                    .replace(/`([^`]+)`/g, '$1')       // Inline Code
-                    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Links
-                    .replace(/```[\s\S]*?```/g, '')    // Code blocks (제거)
-                    .replace(/>\s?/g, '');             // Blockquotes
+                    .replace(/^#+\s+/gm, '')           
+                    .replace(/\*\*(.*?)\*\*/g, '$1')   
+                    .replace(/__(.*?)__/g, '$1')       
+                    .replace(/\*(.*?)\*/g, '$1')       
+                    .replace(/`([^`]+)`/g, '$1')       
+                    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') 
+                    .replace(/```[\s\S]*?```/g, '')    
+                    .replace(/>\s?/g, '');             
             }
 
-            // 3. 클립보드에 쓰기
             await navigator.clipboard.writeText(text);
 
-            // 4. 버튼 피드백 (이모지로 변경)
             const btn = document.parent.document.getElementById(btnId) || document.getElementById(btnId);
             if(btn){
                 const originalHtml = btn.innerHTML;
@@ -217,7 +213,9 @@ with st.sidebar:
     use_google_search = st.toggle("Net Search", value=False)
     st.markdown("---")
     
-    with st.expander("Adv. Params"):
+    with st.expander("Adv. Params", expanded=True): # 기본으로 펼쳐둠
+        # [수정됨] 화면 높이 조절 슬라이더 추가 (기본 850px, 최대 2000px)
+        chat_window_height = st.slider("Chat Window Height", 400, 2000, 850, step=50)
         temperature = st.slider("Entropy", 0.0, 2.0, 0.7)
         system_prompt = st.text_area("SysPrompt", height=100)
 
@@ -257,7 +255,8 @@ for i, tab in enumerate(tabs):
                 save_history()
                 st.rerun()
 
-        chat_container = st.container(height=550, border=False)
+        # [수정됨] 고정값 550 대신 슬라이더 값(chat_window_height) 적용
+        chat_container = st.container(height=chat_window_height, border=False)
         
         with chat_container:
             if not session["messages"]: st.caption("System Ready.")
@@ -267,8 +266,6 @@ for i, tab in enumerate(tabs):
                 with st.chat_message(msg["role"], avatar=avatar):
                     
                     if msg["role"] == "assistant":
-                        # [핵심] 텍스트를 Base64로 인코딩하여 HTML 속성에 주입
-                        # 이 방식은 자바스크립트 문법 에러가 절대 발생하지 않습니다.
                         b64_content = base64.b64encode(msg["content"].encode('utf-8')).decode('utf-8')
                         btn_md_id = f"btn_md_{session['id']}_{idx}"
                         btn_txt_id = f"btn_txt_{session['id']}_{idx}"
@@ -340,7 +337,6 @@ for i, tab in enumerate(tabs):
                                     for c in md["groundingChunks"]:
                                         if "web" in c: sources.append(c["web"])
 
-                                # 실시간 렌더링 시 Base64 적용
                                 b64_content = base64.b64encode(bot_text.encode('utf-8')).decode('utf-8')
                                 unique_id = str(uuid.uuid4())
                                 btn_md_id = f"temp_btn_md_{unique_id}"
@@ -365,4 +361,3 @@ for i, tab in enumerate(tabs):
                             else: ph.warning("No Data")
                         else: ph.error(f"Err {res.status_code}")
                     except Exception as e: ph.error(str(e))
-
