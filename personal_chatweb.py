@@ -320,7 +320,7 @@ for i, tab in enumerate(tabs):
                             ]
                         }
 
-                        if use_google_search: payload["tools"] = [{"google_search": {}}]
+                        if use_google_search: payload["tools"] = [{"google_search_retrieval": {}}]
                         if system_prompt.strip(): payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
 
                         res = requests.post(url, headers={'Content-Type': 'application/json'}, data=json.dumps(payload))
