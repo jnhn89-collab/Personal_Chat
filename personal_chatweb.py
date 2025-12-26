@@ -175,6 +175,7 @@ MODEL_OPTIONS = {
     },
     "Gemini 3.0 Series": {
         "gemini-3-pro-preview": "Gemini 3 Pro Preview",
+        "gemini-3-flash-preview": "Gemini 3 Flash Preview",
     },
     "Gemini 2.5 Series": {
         "gemini-2.5-pro": "Gemini 2.5 Pro",
