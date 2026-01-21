@@ -312,6 +312,5 @@ if st.session_state.sessions and st.session_state.sessions[tabs.index(tab) if 't
                 ph.error(f"Exception: {str(e)}")
 
 
-
-이거 잘 되다가 갑자기 오늘
-SYntaxError:Unexpected token'<'라고 나오는데
+이거랑 인덱스.html이 있는데, 
+로컬에서 돌릴수있나?
