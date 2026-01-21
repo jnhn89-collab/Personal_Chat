@@ -310,7 +310,3 @@ if st.session_state.sessions and st.session_state.sessions[tabs.index(tab) if 't
                     ph.error(f"Error {res.status_code}: {error_details}")
             except Exception as e:
                 ph.error(f"Exception: {str(e)}")
-
-
-이거랑 인덱스.html이 있는데, 
-로컬에서 돌릴수있나?
