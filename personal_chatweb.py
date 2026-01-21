@@ -77,50 +77,53 @@ def fetch_available_models(api_key):
     except Exception as e:
         st.error(f"Model fetch error: {str(e)}")
         return None
-
+        
 # --- 3. 핵심: Base64 클립보드 복사 스크립트 ---
 st.markdown("""
 <script>
-    async function copyBase64(b64text, btnId, mode) {
-        try {
-            const binaryString = atob(b64text);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            const decoder = new TextDecoder('utf-8');
-            let text = decoder.decode(bytes);
+    // 함수가 중복 정의되는 것을 방지
+    if (typeof window.copyBase64 === 'undefined') {
+        window.copyBase64 = async function(b64text, btnId, mode) {
+            try {
+                const binaryString = atob(b64text);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                const decoder = new TextDecoder('utf-8');
+                let text = decoder.decode(bytes);
 
-            if (mode === 'txt') {
-                text = text
-                    .replace(/^#+\s+/gm, '')           
-                    .replace(/\*\*(.*?)\*\*/g, '$1')   
-                    .replace(/__(.*?)__/g, '$1')       
-                    .replace(/\*(.*?)\*/g, '$1')       
-                    .replace(/`([^`]+)`/g, '$1')       
-                    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') 
-                    .replace(/```[\s\S]*?```/g, '')    
-                    .replace(/>\s?/g, '');             
-            }
+                if (mode === 'txt') {
+                    text = text
+                        .replace(/^#+\s+/gm, '')           
+                        .replace(/\*\*(.*?)\*\*/g, '$1')   
+                        .replace(/__(.*?)__/g, '$1')       
+                        .replace(/\*(.*?)\*/g, '$1')       
+                        .replace(/`([^`]+)`/g, '$1')       
+                        .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') 
+                        .replace(/```[\s\S]*?```/g, '')    
+                        .replace(/>\s?/g, '');             
+                }
 
-            await navigator.clipboard.writeText(text);
+                await navigator.clipboard.writeText(text);
 
-            const btn = document.parent.document.getElementById(btnId) || document.getElementById(btnId);
-            if(btn){
-                const originalHtml = btn.innerHTML;
-                btn.innerHTML = '✅ Copied!';
-                btn.style.color = '#10b981';
-                btn.style.borderColor = '#10b981';
-                setTimeout(() => { 
-                    btn.innerHTML = originalHtml; 
-                    btn.style.color = '#475569';
-                    btn.style.borderColor = '#cbd5e1';
-                }, 2000);
+                // Streamlit의 iframe 구조 때문에 window.parent.document를 확인해야 함
+                const btn = window.parent.document.getElementById(btnId) || document.getElementById(btnId);
+                if(btn){
+                    const originalHtml = btn.innerHTML;
+                    btn.innerHTML = '✅ Copied!';
+                    btn.style.color = '#10b981';
+                    btn.style.borderColor = '#10b981';
+                    setTimeout(() => { 
+                        btn.innerHTML = originalHtml; 
+                        btn.style.color = '#475569';
+                        btn.style.borderColor = '#cbd5e1';
+                    }, 2000);
+                }
+            } catch (err) {
+                console.error('Copy failed:', err);
             }
-        } catch (err) {
-            console.error('Copy failed:', err);
-            alert('복사에 실패했습니다. 브라우저 보안 설정을 확인하세요.');
-        }
+        };
     }
 </script>
 <style>
@@ -139,6 +142,7 @@ st.markdown("""
     .source-box { font-size: 0.75em; color: #64748b; background-color: #f8fafc; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0; margin-top: 10px; }
 </style>
 """, unsafe_allow_html=True)
+
 
 # --- 4. 세션 관리 및 보안 ---
 def check_password():
