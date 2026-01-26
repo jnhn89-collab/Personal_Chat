@@ -287,7 +287,7 @@ if st.session_state.sessions and st.session_state.sessions[tabs.index(tab) if 't
                 # 400 에러의 원인은 주로 잘못된 'tools' 구조나 지원하지 않는 모델에서의 호출입니다.
                 if use_google_search:
                     # Google Search Retrieval의 올바른 v1beta 구조
-                    payload["tools"] = [{"google_search_retrieval": {}}]
+                    payload["tools"] = [{"google_search": {}}]
 
                 res = requests.post(url, headers={'Content-Type': 'application/json'}, data=json.dumps(payload))
                 
