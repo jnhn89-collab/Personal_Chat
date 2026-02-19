@@ -119,18 +119,18 @@ def tg_authenticate(api_id, api_hash, phone):
             await client.connect()
             
             if not await client.is_user_authorized():
-                await client.send_code_request(phone)
+                sent = await client.send_code_request(phone)
                 await client.disconnect()
-                return "CODE_NEEDED"
+                return ("CODE_NEEDED", sent.phone_code_hash)
             
             await client.disconnect()
-            return "AUTHORIZED"
+            return ("AUTHORIZED", None)
         
         return _run_async(_auth())
     except Exception as e:
-        return f"ERROR: {str(e)}"
+        return (f"ERROR: {str(e)}", None)
 
-def tg_verify_code(api_id, api_hash, phone, code):
+def tg_verify_code(api_id, api_hash, phone, code, phone_code_hash):
     """인증 코드로 로그인을 완료합니다."""
     try:
         from telethon import TelegramClient
@@ -139,7 +139,7 @@ def tg_verify_code(api_id, api_hash, phone, code):
             session_name = _get_session_name(phone)
             client = TelegramClient(session_name, int(api_id), api_hash)
             await client.connect()
-            await client.sign_in(phone, code)
+            await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
             authorized = await client.is_user_authorized()
             await client.disconnect()
             return "AUTHORIZED" if authorized else "FAILED"
@@ -317,6 +317,7 @@ if "tg_api_hash" not in st.session_state: st.session_state.tg_api_hash = ""
 if "tg_phone" not in st.session_state: st.session_state.tg_phone = ""
 if "tg_bot_username" not in st.session_state: st.session_state.tg_bot_username = ""
 if "tg_auth_status" not in st.session_state: st.session_state.tg_auth_status = "NOT_STARTED"
+if "tg_code_hash" not in st.session_state: st.session_state.tg_code_hash = ""
 if "tg_messages" not in st.session_state: st.session_state.tg_messages = load_tg_history()
 if "tg_last_update_id" not in st.session_state: st.session_state.tg_last_update_id = 0
 
@@ -379,12 +380,14 @@ with st.sidebar:
         if st.button("🔗 Connect Telegram", use_container_width=True, disabled=not tg_ready):
             try:
                 with st.spinner("Connecting to Telegram..."):
-                    result = tg_authenticate(
+                    result, code_hash = tg_authenticate(
                         st.session_state.tg_api_id,
                         st.session_state.tg_api_hash,
                         st.session_state.tg_phone
                     )
                     st.session_state.tg_auth_status = result
+                    if code_hash:
+                        st.session_state.tg_code_hash = code_hash
                     if result == "AUTHORIZED":
                         st.success("✅ Connected!")
                     elif result == "CODE_NEEDED":
@@ -525,7 +528,8 @@ with tabs[-1]:
                         st.session_state.tg_api_id,
                         st.session_state.tg_api_hash,
                         st.session_state.tg_phone,
-                        tg_code
+                        tg_code,
+                        st.session_state.tg_code_hash
                     )
                     if result == "AUTHORIZED":
                         st.session_state.tg_auth_status = "AUTHORIZED"
