@@ -1,0 +1,5 @@
+streamlit
+requests
+telethon
+cryptg
+streamlit-autorefresh
