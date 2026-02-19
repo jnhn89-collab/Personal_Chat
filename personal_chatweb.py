@@ -4,9 +4,9 @@ import json
 import uuid
 import os
 import base64
-import re
 import asyncio
 import threading
+import time
 from datetime import datetime
 
 # ==========================================
@@ -24,13 +24,12 @@ st.set_page_config(
     initial_sidebar_state="expanded" 
 )
 
-# --- 2. 유틸리티 함수 (암호화 및 모델 관리) ---
+# --- 2. 유틸리티 함수 ---
 def encrypt_data(data_str, key):
     enc = []
     for i, c in enumerate(data_str):
         key_c = key[i % len(key)]
-        enc_c = chr(ord(c) ^ ord(key_c))
-        enc.append(enc_c)
+        enc.append(chr(ord(c) ^ ord(key_c)))
     return base64.b64encode("".join(enc).encode()).decode()
 
 def decrypt_data(enc_str, key):
@@ -39,55 +38,39 @@ def decrypt_data(enc_str, key):
         enc_str = base64.b64decode(enc_str).decode()
         for i, c in enumerate(enc_str):
             key_c = key[i % len(key)]
-            dec_c = chr(ord(c) ^ ord(key_c))
-            dec.append(dec_c)
+            dec.append(chr(ord(c) ^ ord(key_c)))
         return "".join(dec)
     except:
         return ""
 
 def fetch_available_models(api_key):
-    """API로부터 사용 가능한 모델 목록을 가져와 카테고리화합니다."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     try:
         res = requests.get(url)
         if res.status_code == 200:
             models_data = res.json().get("models", [])
             filtered_models = [m for m in models_data if "generateContent" in m.get("supportedGenerationMethods", [])]
-            
             categories = {
-                "Gemini 3.0 Series": [],
-                "Gemini 2.5 Series": [],
-                "Gemini 2.0 Series": [],
-                "Experimental/Special": [],
-                "Legacy/Other": []
+                "Gemini 3.0 Series": [], "Gemini 2.5 Series": [],
+                "Gemini 2.0 Series": [], "Experimental/Special": [], "Legacy/Other": []
             }
-
             for m in filtered_models:
                 m_id = m["name"].split("/")[-1]
                 m_disp = m.get("displayName", m_id)
-                
                 if "3.0" in m_id: categories["Gemini 3.0 Series"].append((m_id, m_disp))
                 elif "2.5" in m_id: categories["Gemini 2.5 Series"].append((m_id, m_disp))
                 elif "2.0" in m_id: categories["Gemini 2.0 Series"].append((m_id, m_disp))
                 elif "exp" in m_id or "preview" in m_id: categories["Experimental/Special"].append((m_id, m_disp))
                 else: categories["Legacy/Other"].append((m_id, m_disp))
-            
             return {k: v for k, v in categories.items() if v}
-        else:
-            st.error(f"Failed to fetch models: {res.status_code}")
-            return None
-    except Exception as e:
-        st.error(f"Model fetch error: {str(e)}")
+        return None
+    except:
         return None
 
-# --- Telegram 유틸리티 함수 ---
+# --- Telegram Async 유틸리티 ---
 def _run_async(coro):
-    """Streamlit 환경에서 안전하게 async 함수를 실행합니다.
-    Streamlit은 이미 이벤트 루프가 돌고 있을 수 있어서,
-    새 루프를 별도 스레드에서 실행합니다."""
     result = [None]
     exception = [None]
-    
     def runner():
         try:
             loop = asyncio.new_event_loop()
@@ -96,11 +79,9 @@ def _run_async(coro):
             loop.close()
         except Exception as e:
             exception[0] = e
-    
     t = threading.Thread(target=runner)
     t.start()
-    t.join(timeout=30)  # 최대 30초 대기
-    
+    t.join(timeout=30)
     if exception[0]:
         raise exception[0]
     return result[0]
@@ -109,172 +90,216 @@ def _get_session_name(phone):
     return f"session_{phone.replace('+','').replace(' ','')}"
 
 def tg_authenticate(api_id, api_hash, phone):
-    """Telethon 세션 인증을 시작합니다."""
     try:
         from telethon import TelegramClient
-        
         async def _auth():
-            session_name = _get_session_name(phone)
-            client = TelegramClient(session_name, int(api_id), api_hash)
+            client = TelegramClient(_get_session_name(phone), int(api_id), api_hash)
             await client.connect()
-            
             if not await client.is_user_authorized():
                 sent = await client.send_code_request(phone)
                 await client.disconnect()
                 return ("CODE_NEEDED", sent.phone_code_hash)
-            
             await client.disconnect()
             return ("AUTHORIZED", None)
-        
         return _run_async(_auth())
     except Exception as e:
         return (f"ERROR: {str(e)}", None)
 
 def tg_verify_code(api_id, api_hash, phone, code, phone_code_hash):
-    """인증 코드로 로그인을 완료합니다."""
     try:
         from telethon import TelegramClient
-        
         async def _verify():
-            session_name = _get_session_name(phone)
-            client = TelegramClient(session_name, int(api_id), api_hash)
+            client = TelegramClient(_get_session_name(phone), int(api_id), api_hash)
             await client.connect()
             await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
             authorized = await client.is_user_authorized()
             await client.disconnect()
             return "AUTHORIZED" if authorized else "FAILED"
-        
         return _run_async(_verify())
     except Exception as e:
         return f"ERROR: {str(e)}"
 
 def tg_send_via_user_api(api_id, api_hash, phone, bot_username, message):
-    """내 계정으로 Bot에게 메시지를 보냅니다."""
     try:
         from telethon import TelegramClient
-        
         async def _send():
-            session_name = _get_session_name(phone)
-            client = TelegramClient(session_name, int(api_id), api_hash)
+            client = TelegramClient(_get_session_name(phone), int(api_id), api_hash)
             await client.connect()
             await client.send_message(bot_username, message)
             await client.disconnect()
             return True
-        
         return _run_async(_send())
     except Exception as e:
         return str(e)
 
 def tg_get_bot_replies(api_id, api_hash, phone, bot_username, limit=50):
-    """Bot과의 대화 내역을 가져옵니다."""
     try:
         from telethon import TelegramClient
-        
-        async def _get_messages():
-            session_name = _get_session_name(phone)
-            client = TelegramClient(session_name, int(api_id), api_hash)
+        async def _get():
+            client = TelegramClient(_get_session_name(phone), int(api_id), api_hash)
             await client.connect()
-            
             messages = []
             async for msg in client.iter_messages(bot_username, limit=limit):
                 messages.append({
-                    "id": msg.id,
-                    "text": msg.text or "",
+                    "id": msg.id, "text": msg.text or "",
                     "from_me": msg.out,
-                    "date": msg.date.strftime("%Y-%m-%d %H:%M:%S") if msg.date else ""
+                    "date": msg.date.strftime("%H:%M") if msg.date else "",
+                    "date_full": msg.date.strftime("%Y-%m-%d %H:%M:%S") if msg.date else ""
                 })
-            
             await client.disconnect()
             messages.reverse()
             return messages
-        
-        return _run_async(_get_messages())
+        return _run_async(_get())
     except Exception as e:
         return str(e)
 
+def tg_fetch_messages():
+    """공통: Telegram 메시지 갱신"""
+    result = tg_get_bot_replies(
+        st.session_state.tg_api_id, st.session_state.tg_api_hash,
+        st.session_state.tg_phone, st.session_state.tg_bot_username, limit=100
+    )
+    if isinstance(result, list):
+        st.session_state.tg_messages = result
+        save_tg_history()
+        return True
+    return False
 
-# --- 3. 핵심: Base64 클립보드 복사 스크립트 ---
+# --- 3. 전역 CSS + JS ---
 st.markdown("""
+<style>
+    /* 전체 */
+    .stApp { background-color: #f0f2f5; }
+    [data-testid="stSidebar"] { background-color: #ffffff; border-right: 1px solid #e5e7eb; }
+    .block-container { padding-top: 1rem; padding-bottom: 0; }
+    header[data-testid="stHeader"] { background: rgba(255,255,255,0.97); backdrop-filter: blur(10px); border-bottom: 1px solid #f3f4f6; }
+    
+    /* 탭 */
+    .stTabs [data-baseweb="tab-list"] { 
+        position: sticky; top: 0; z-index: 999; 
+        background: #ffffff; padding: 6px 0; border-bottom: 2px solid #e5e7eb;
+    }
+    .stTabs [data-baseweb="tab"] { padding: 8px 20px; font-weight: 600; font-size: 13px; }
+    
+    /* Gemini 메시지 — ChatGPT 스타일 */
+    [data-testid="stChatMessage"] { 
+        padding: 16px 20px; border-radius: 0; margin-bottom: 0;
+        border-bottom: 1px solid #f3f4f6;
+    }
+    div[data-testid="stChatMessage"]:nth-child(odd) { background: #ffffff; border: none; border-bottom: 1px solid #f3f4f6; }
+    div[data-testid="stChatMessage"]:nth-child(even) { background: #f7f7f8; border: none; border-bottom: 1px solid #f3f4f6; }
+
+    /* 복사 버튼 */
+    .copy-btn-wrapper { display: flex; justify-content: flex-end; gap: 5px; margin-bottom: 4px; opacity: 0; transition: opacity 0.2s; }
+    [data-testid="stChatMessage"]:hover .copy-btn-wrapper { opacity: 1; }
+    .custom-copy-btn { 
+        background: #fff; border: 1px solid #d1d5db; border-radius: 6px; 
+        font-size: 11px; color: #6b7280; cursor: pointer; padding: 4px 10px; 
+        font-family: system-ui; transition: all 0.15s;
+    }
+    .custom-copy-btn:hover { background: #f3f4f6; color: #111827; }
+    .source-box { font-size: 12px; color: #6b7280; background: #f9fafb; padding: 8px 12px; border-radius: 8px; border: 1px solid #e5e7eb; margin-top: 8px; }
+    
+    /* === Telegram 메신저 스타일 === */
+    .tg-header {
+        background: #ffffff; padding: 12px 20px; border-bottom: 1px solid #e5e7eb;
+        display: flex; align-items: center; gap: 12px; border-radius: 12px 12px 0 0;
+        margin-bottom: 4px;
+    }
+    .tg-avatar { 
+        width: 42px; height: 42px; border-radius: 50%; 
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        display: flex; align-items: center; justify-content: center;
+        color: white; font-size: 20px;
+    }
+    .tg-bot-info .name { font-size: 15px; font-weight: 600; color: #111827; }
+    .tg-bot-info .status { font-size: 11px; color: #10b981; }
+    
+    .tg-chat-area { display: flex; flex-direction: column; gap: 3px; padding: 12px 16px; }
+    .tg-row { display: flex; margin: 1px 0; }
+    .tg-row.me { justify-content: flex-end; }
+    .tg-row.bot { justify-content: flex-start; }
+    .tg-bubble {
+        max-width: 72%; padding: 9px 14px; border-radius: 18px;
+        font-size: 14px; line-height: 1.55; word-wrap: break-word; white-space: pre-wrap;
+    }
+    .tg-bubble.me {
+        background: linear-gradient(135deg, #3b82f6, #2563eb);
+        color: #fff; border-bottom-right-radius: 4px;
+    }
+    .tg-bubble.bot {
+        background: #ffffff; color: #1f2937;
+        border: 1px solid #e5e7eb; border-bottom-left-radius: 4px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .tg-ts { font-size: 10px; color: #b0b0b0; margin-top: 1px; padding: 0 6px; }
+    .tg-ts.me { text-align: right; }
+    .tg-ts.bot { text-align: left; }
+    
+    /* 빈 상태 */
+    .empty-state { text-align:center; padding:80px 20px; color:#9ca3af; }
+    .empty-state .icon { font-size:48px; margin-bottom:12px; }
+    .empty-state .title { font-size:17px; font-weight:600; color:#6b7280; }
+    .empty-state .sub { font-size:13px; margin-top:6px; }
+</style>
+
 <script>
+    // 복사 기능
     if (typeof window.copyBase64 === 'undefined') {
         window.copyBase64 = async function(b64text, btnId, mode) {
             try {
-                const binaryString = atob(b64text);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                const decoder = new TextDecoder('utf-8');
-                let text = decoder.decode(bytes);
-
+                const bytes = new Uint8Array(atob(b64text).split('').map(c=>c.charCodeAt(0)));
+                let text = new TextDecoder('utf-8').decode(bytes);
                 if (mode === 'txt') {
-                    text = text
-                        .replace(/^#+\\s+/gm, '')           
-                        .replace(/\\*\\*(.*?)\\*\\*/g, '$1')   
-                        .replace(/__(.*?)__/g, '$1')       
-                        .replace(/\\*(.*?)\\*/g, '$1')       
-                        .replace(/`([^`]+)`/g, '$1')       
-                        .replace(/\\[([^\\]]+)\\]\\([^\\)]+\\)/g, '$1') 
-                        .replace(/```[\\s\\S]*?```/g, '')    
-                        .replace(/>\\s?/g, '');             
+                    text = text.replace(/^#+\\s+/gm,'').replace(/\\*\\*(.*?)\\*\\*/g,'$1')
+                        .replace(/__(.*?)__/g,'$1').replace(/\\*(.*?)\\*/g,'$1')
+                        .replace(/`([^`]+)`/g,'$1').replace(/\\[([^\\]]+)\\]\\([^\\)]+\\)/g,'$1')
+                        .replace(/```[\\s\\S]*?```/g,'').replace(/>\\s?/g,'');
                 }
-
                 await navigator.clipboard.writeText(text);
-
                 const btn = window.parent.document.getElementById(btnId) || document.getElementById(btnId);
-                if(btn){
-                    const originalHtml = btn.innerHTML;
-                    btn.innerHTML = '✅ Copied!';
-                    btn.style.color = '#10b981';
-                    btn.style.borderColor = '#10b981';
-                    setTimeout(() => { 
-                        btn.innerHTML = originalHtml; 
-                        btn.style.color = '#475569';
-                        btn.style.borderColor = '#cbd5e1';
-                    }, 2000);
+                if(btn){ 
+                    const orig = btn.innerHTML;
+                    btn.innerHTML='✅'; btn.style.color='#10b981';
+                    setTimeout(()=>{ btn.innerHTML=orig; btn.style.color='#6b7280'; },1500);
                 }
-            } catch (err) {
-                console.error('Copy failed:', err);
-            }
+            } catch(e){ console.error(e); }
         };
     }
-</script>
-<style>
-    .stApp { background-color: #ffffff; color: #1e293b; }
-    [data-testid="stSidebar"] { background-color: #f8fafc; border-right: 1px solid #e2e8f0; }
-    .stTabs [data-baseweb="tab-list"] { 
-        position: sticky; top: 2.5rem; z-index: 999; background-color: #ffffff;
-        padding: 5px 0; border-bottom: 1px solid #f1f5f9;
-    }
-    [data-testid="stChatMessage"] { padding: 1rem; border-radius: 12px; margin-bottom: 12px; position: relative;}
-    div[data-testid="stChatMessage"]:nth-child(odd) { background-color: #eff6ff; border: 1px solid #dbeafe; }
-    div[data-testid="stChatMessage"]:nth-child(even) { background-color: #ffffff; border: 1px solid #e2e8f0; }
-    .copy-btn-wrapper { display: flex; justify-content: flex-end; gap: 5px; margin-bottom: 5px; opacity: 0.4; transition: opacity 0.2s; }
-    .copy-btn-wrapper:hover { opacity: 1; }
-    .custom-copy-btn { background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 11px; color: #475569; cursor: pointer; padding: 3px 8px; font-family: monospace; font-weight: bold; }
-    .source-box { font-size: 0.75em; color: #64748b; background-color: #f8fafc; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0; margin-top: 10px; }
     
-    /* Telegram 전용 스타일 */
-    .tg-msg-user { background: linear-gradient(135deg, #dbeafe, #eff6ff); border: 1px solid #93c5fd; border-radius: 12px 12px 4px 12px; padding: 10px 14px; margin: 6px 0; margin-left: 20%; }
-    .tg-msg-bot { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px 12px 12px 4px; padding: 10px 14px; margin: 6px 0; margin-right: 20%; }
-    .tg-msg-time { font-size: 10px; color: #94a3b8; margin-top: 4px; }
-    .tg-msg-text { font-size: 14px; color: #1e293b; line-height: 1.5; white-space: pre-wrap; }
-</style>
+    // 자동 스크롤: 스크롤 가능 컨테이너를 맨 아래로
+    (function(){
+        function scrollAll(){
+            const els = window.parent.document.querySelectorAll('[data-testid="stScrollableBlockContainer"]');
+            els.forEach(el => { el.scrollTop = el.scrollHeight + 9999; });
+        }
+        // 여러 타이밍에 시도 (Streamlit 렌더링 대기)
+        [100, 300, 600, 1200].forEach(ms => setTimeout(scrollAll, ms));
+        
+        // DOM 변경 감지 시에도 스크롤
+        const obs = new MutationObserver(() => setTimeout(scrollAll, 80));
+        setTimeout(() => {
+            const t = window.parent.document.querySelector('[data-testid="stAppViewContainer"]');
+            if(t) obs.observe(t, {childList:true, subtree:true});
+        }, 500);
+    })();
+</script>
 """, unsafe_allow_html=True)
 
 
-# --- 4. 세션 관리 및 보안 ---
+# --- 4. 인증 ---
 def check_password():
     if "authenticated" not in st.session_state: st.session_state.authenticated = False
     if not st.session_state.authenticated:
         col1, col2, col3 = st.columns([1, 1, 1])
         with col2:
-            st.info("🔒 Authorized Access Only")
-            pwd = st.text_input("Access Code", type="password")
-            if st.button("Verify", use_container_width=True):
+            st.markdown("<div style='padding-top:80px;'></div>", unsafe_allow_html=True)
+            st.markdown("### 🔒 System Dashboard")
+            st.caption("Authorized Access Only")
+            pwd = st.text_input("Access Code", type="password", label_visibility="collapsed", placeholder="Enter access code...")
+            if st.button("Verify", use_container_width=True, type="primary"):
                 if pwd == ACCESS_PASSWORD:
-                    st.session_state.authenticated = True
-                    st.rerun()
+                    st.session_state.authenticated = True; st.rerun()
                 else: st.error("Access Denied")
         st.stop() 
 
@@ -291,7 +316,6 @@ def save_history():
     with open(HISTORY_FILE, "w", encoding="utf-8") as f: f.write(data)
 
 def load_tg_history():
-    """Telegram 대화 내역 로드"""
     if os.path.exists(TELEGRAM_HISTORY_FILE):
         try:
             with open(TELEGRAM_HISTORY_FILE, "r", encoding="utf-8") as f:
@@ -300,365 +324,282 @@ def load_tg_history():
     return []
 
 def save_tg_history():
-    """Telegram 대화 내역 저장"""
     data = encrypt_data(json.dumps(st.session_state.tg_messages, ensure_ascii=False), ACCESS_PASSWORD)
     with open(TELEGRAM_HISTORY_FILE, "w", encoding="utf-8") as f: f.write(data)
 
 check_password()
 
-# --- 세션 상태 초기화 ---
-if "sessions" not in st.session_state: st.session_state.sessions = load_history()
-if "api_key" not in st.session_state: st.session_state.api_key = ""
-if "model_options" not in st.session_state: st.session_state.model_options = None
-
-# Telegram 관련 세션 상태
-if "tg_api_id" not in st.session_state: st.session_state.tg_api_id = ""
-if "tg_api_hash" not in st.session_state: st.session_state.tg_api_hash = ""
-if "tg_phone" not in st.session_state: st.session_state.tg_phone = ""
-if "tg_bot_username" not in st.session_state: st.session_state.tg_bot_username = ""
-if "tg_auth_status" not in st.session_state: st.session_state.tg_auth_status = "NOT_STARTED"
-if "tg_code_hash" not in st.session_state: st.session_state.tg_code_hash = ""
-if "tg_messages" not in st.session_state: st.session_state.tg_messages = load_tg_history()
-if "tg_last_update_id" not in st.session_state: st.session_state.tg_last_update_id = 0
+# --- 세션 초기화 ---
+defaults = {
+    "sessions": load_history(), "api_key": "", "model_options": None,
+    "tg_api_id": "", "tg_api_hash": "", "tg_phone": "", "tg_bot_username": "",
+    "tg_auth_status": "NOT_STARTED", "tg_code_hash": "",
+    "tg_messages": load_tg_history(), "tg_pending_refresh": False
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 
-# --- 5. 사이드바 UI ---
+# --- 5. 사이드바 ---
 with st.sidebar:
-    st.header("⚙️ Config")
+    st.markdown("### ⚙️ Settings")
     
-    # === Gemini 설정 ===
-    with st.expander("🤖 Gemini API", expanded=not bool(st.session_state.api_key)):
-        st.session_state.api_key = st.text_input("API Key", value=st.session_state.api_key, type="password")
+    with st.expander("🤖 Gemini", expanded=not bool(st.session_state.api_key)):
+        st.session_state.api_key = st.text_input("API Key", value=st.session_state.api_key, type="password", label_visibility="collapsed", placeholder="Gemini API Key")
     
-    if st.button("🔄 Refresh Model List", use_container_width=True):
+    if st.button("🔄 Refresh Models", use_container_width=True):
         if st.session_state.api_key:
-            st.session_state.model_options = fetch_available_models(st.session_state.api_key)
-            st.success("Models updated!")
-        else:
-            st.warning("Enter API Key first.")
+            with st.spinner("Loading..."):
+                st.session_state.model_options = fetch_available_models(st.session_state.api_key)
+            if st.session_state.model_options: st.success("✅ Loaded")
+            else: st.error("Failed")
+        else: st.warning("Enter API Key")
 
-    st.subheader("Engine")
     if st.session_state.model_options:
-        cat = st.selectbox("Type", options=st.session_state.model_options.keys())
+        cat = st.selectbox("Series", options=st.session_state.model_options.keys())
         model_list = st.session_state.model_options[cat]
-        selected_model_display = st.selectbox("Ver", options=[m[1] for m in model_list])
-        selected_model_id = [m[0] for m in model_list if m[1] == selected_model_display][0]
+        sel_disp = st.selectbox("Model", options=[m[1] for m in model_list])
+        selected_model_id = [m[0] for m in model_list if m[1] == sel_disp][0]
     else:
-        st.caption("Click Refresh to load models.")
+        st.caption("Click Refresh to load")
         selected_model_id = "gemini-1.5-flash"
 
-    st.markdown("---")
-    use_google_search = st.toggle("Net Search (Google Search)", value=False)
-    st.markdown("---")
+    use_google_search = st.toggle("🌐 Google Search", value=False)
     
-    with st.expander("Adv. Params", expanded=True):
-        chat_window_height = st.slider("Chat Window Height", 400, 2000, 850, step=50)
-        temperature = st.slider("Entropy", 0.0, 2.0, 0.7)
-        system_prompt = st.text_area("SysPrompt", height=100)
+    with st.expander("⚙️ Parameters"):
+        chat_window_height = st.slider("Chat Height", 400, 2000, 850, step=50)
+        temperature = st.slider("Temperature", 0.0, 2.0, 0.7)
+        system_prompt = st.text_area("System Prompt", height=80, placeholder="Optional...")
 
-    st.divider()
+    st.markdown("---")
     
-    # === Telegram 설정 ===
-    with st.expander("📱 Telegram Config", expanded=False):
-        st.session_state.tg_api_id = st.text_input("API ID", value=st.session_state.tg_api_id, type="password", key="tg_id_input")
-        st.session_state.tg_api_hash = st.text_input("API Hash", value=st.session_state.tg_api_hash, type="password", key="tg_hash_input")
-        st.session_state.tg_phone = st.text_input("Phone (+국가코드)", value=st.session_state.tg_phone, placeholder="+821012345678", key="tg_phone_input")
-        st.session_state.tg_bot_username = st.text_input("Bot Username", value=st.session_state.tg_bot_username, placeholder="@my_bot", key="tg_bot_input")
+    with st.expander("📱 Telegram", expanded=False):
+        st.session_state.tg_api_id = st.text_input("API ID", value=st.session_state.tg_api_id, type="password", key="sb_tid")
+        st.session_state.tg_api_hash = st.text_input("API Hash", value=st.session_state.tg_api_hash, type="password", key="sb_thash")
+        st.session_state.tg_phone = st.text_input("Phone", value=st.session_state.tg_phone, placeholder="+821012345678", key="sb_tphone")
+        st.session_state.tg_bot_username = st.text_input("Bot", value=st.session_state.tg_bot_username, placeholder="@my_bot", key="sb_tbot")
         
-        # 인증 상태 표시
         if st.session_state.tg_auth_status == "AUTHORIZED":
-            st.success("✅ Telegram 인증 완료")
+            st.success("✅ Connected")
         elif st.session_state.tg_auth_status == "CODE_NEEDED":
-            st.warning("⏳ 인증 코드 입력 대기중")
-        else:
-            st.info("🔑 인증 필요")
+            st.warning("⏳ Code needed")
         
-        # 연결 버튼
         tg_ready = all([st.session_state.tg_api_id, st.session_state.tg_api_hash, 
                         st.session_state.tg_phone, st.session_state.tg_bot_username])
         
-        if st.button("🔗 Connect Telegram", use_container_width=True, disabled=not tg_ready):
+        if st.button("🔗 Connect", use_container_width=True, disabled=not tg_ready, key="sb_tconnect"):
             try:
-                with st.spinner("Connecting to Telegram..."):
+                with st.spinner("Connecting..."):
                     result, code_hash = tg_authenticate(
-                        st.session_state.tg_api_id,
-                        st.session_state.tg_api_hash,
-                        st.session_state.tg_phone
+                        st.session_state.tg_api_id, st.session_state.tg_api_hash, st.session_state.tg_phone
                     )
                     st.session_state.tg_auth_status = result
-                    if code_hash:
-                        st.session_state.tg_code_hash = code_hash
-                    if result == "AUTHORIZED":
-                        st.success("✅ Connected!")
-                    elif result == "CODE_NEEDED":
-                        st.info("📲 Telegram 앱에서 인증 코드를 확인하세요.")
-                    else:
-                        st.error(f"❌ {result}")
+                    if code_hash: st.session_state.tg_code_hash = code_hash
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ Connection failed: {str(e)}")
+                st.error(f"❌ {str(e)}")
 
-    st.divider()
-    
-    # === 세션 관리 버튼 ===
+    st.markdown("---")
     c1, c2 = st.columns(2)
     if c1.button("➕ New", use_container_width=True):
         st.session_state.sessions.append({"id": str(uuid.uuid4()), "title": f"Session {len(st.session_state.sessions)+1}", "messages": []})
         save_history(); st.rerun()
-    if c2.button("🗑️ Clear", use_container_width=True):
+    if c2.button("🗑️ Del", use_container_width=True):
         if len(st.session_state.sessions) > 1: st.session_state.sessions.pop()
         else: st.session_state.sessions[0].update({"messages": [], "title": "Session 1"})
         save_history(); st.rerun()
-    
     if st.button("🔒 Lock", use_container_width=True):
         st.session_state.authenticated = False; st.rerun()
 
 
-# --- 6. 메인 UI (탭 구성) ---
-st.markdown(f"### 📊 System Dashboard <small style='float:right; color:#94a3b8;'>Model: {selected_model_id}</small>", unsafe_allow_html=True)
-
-# Gemini 세션 탭들 + Telegram 탭
+# --- 6. 메인 ---
 tab_names = [s["title"] for s in st.session_state.sessions] + ["📱 Telegram"]
 tabs = st.tabs(tab_names)
 
-# === Gemini 탭들 ===
+# === Gemini 탭 ===
 for i in range(len(st.session_state.sessions)):
     with tabs[i]:
         session = st.session_state.sessions[i]
-        with st.expander("Session Name", expanded=False):
-            new_title = st.text_input("Name", value=session["title"], key=f"title_{session['id']}")
+        with st.expander("✏️ Rename", expanded=False):
+            new_title = st.text_input("", value=session["title"], key=f"title_{session['id']}", label_visibility="collapsed")
             if new_title != session["title"]:
                 session["title"] = new_title; save_history(); st.rerun()
 
+        st.caption(f"🤖 {selected_model_id}")
         chat_container = st.container(height=chat_window_height, border=False)
         
         with chat_container:
+            if not session["messages"]:
+                st.markdown('<div class="empty-state"><div class="icon">🤖</div><div class="title">Start a conversation</div><div class="sub">Type a message below</div></div>', unsafe_allow_html=True)
             for idx, msg in enumerate(session["messages"]):
-                avatar = "🧑‍💻" if msg["role"] == "user" else "🤖"
-                with st.chat_message(msg["role"], avatar=avatar):
+                with st.chat_message(msg["role"], avatar="🧑‍💻" if msg["role"]=="user" else "🤖"):
                     if msg["role"] == "assistant":
-                        b64_content = base64.b64encode(msg["content"].encode('utf-8')).decode('utf-8')
-                        btn_md_id, btn_txt_id = f"b_m_{idx}_{i}", f"b_t_{idx}_{i}"
-                        st.markdown(f"""<div class="copy-btn-wrapper">
-                            <button id="{btn_md_id}" class="custom-copy-btn" onclick="copyBase64('{b64_content}', '{btn_md_id}', 'md')">📋 MD</button>
-                            <button id="{btn_txt_id}" class="custom-copy-btn" onclick="copyBase64('{b64_content}', '{btn_txt_id}', 'txt')">📝 TXT</button>
-                        </div>""", unsafe_allow_html=True)
+                        b64 = base64.b64encode(msg["content"].encode('utf-8')).decode('utf-8')
+                        bm, bt = f"c_m_{idx}_{i}", f"c_t_{idx}_{i}"
+                        st.markdown(f'<div class="copy-btn-wrapper"><button id="{bm}" class="custom-copy-btn" onclick="copyBase64(\'{b64}\',\'{bm}\',\'md\')">📋 MD</button><button id="{bt}" class="custom-copy-btn" onclick="copyBase64(\'{b64}\',\'{bt}\',\'txt\')">📝 TXT</button></div>', unsafe_allow_html=True)
                     st.markdown(msg["content"])
                     if msg.get("sources"):
-                        src_html = "<div class='source-box'>📚 <b>Ref:</b><br>" + "".join([f"• <a href='{s['uri']}' target='_blank'>{s.get('title','Link')}</a><br>" for s in msg["sources"]]) + "</div>"
-                        st.markdown(src_html, unsafe_allow_html=True)
+                        st.markdown("<div class='source-box'>📚 <b>Sources:</b><br>" + "".join([f"• <a href='{s['uri']}' target='_blank'>{s.get('title','Link')}</a><br>" for s in msg["sources"]]) + "</div>", unsafe_allow_html=True)
 
-        if prompt := st.chat_input("Command Input...", key=f"input_{session['id']}"):
-            if not st.session_state.api_key: st.error("API Key missing!"); st.stop()
+        if prompt := st.chat_input("Message...", key=f"input_{session['id']}"):
+            if not st.session_state.api_key:
+                st.error("⚠️ API Key required"); st.stop()
             session["messages"].append({"role": "user", "content": prompt})
             save_history()
-            
-            # --- Gemini API 호출 (즉시 처리) ---
             with chat_container:
                 with st.chat_message("assistant", avatar="🤖"):
                     ph = st.empty()
+                    ph.markdown("⏳ *Thinking...*")
                     try:
                         url = f"https://generativelanguage.googleapis.com/v1beta/models/{selected_model_id}:generateContent?key={st.session_state.api_key}"
-                        
-                        contents = []
-                        for m in session["messages"][-15:]:
-                            contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
-                        
-                        payload = {
-                            "contents": contents,
-                            "generationConfig": {"temperature": temperature, "maxOutputTokens": 8192},
-                        }
-
-                        if system_prompt.strip():
-                            payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
-
-                        if use_google_search:
-                            payload["tools"] = [{"google_search": {}}]
-
-                        res = requests.post(url, headers={'Content-Type': 'application/json'}, data=json.dumps(payload))
-                        
+                        contents = [{"role": "user" if m["role"]=="user" else "model", "parts": [{"text": m["content"]}]} for m in session["messages"][-15:]]
+                        payload = {"contents": contents, "generationConfig": {"temperature": temperature, "maxOutputTokens": 8192}}
+                        if system_prompt.strip(): payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+                        if use_google_search: payload["tools"] = [{"google_search": {}}]
+                        res = requests.post(url, headers={'Content-Type':'application/json'}, data=json.dumps(payload))
                         if res.status_code == 200:
                             result = res.json()
                             if "candidates" in result:
                                 cand = result["candidates"][0]
                                 bot_text = cand["content"]["parts"][0]["text"]
-                                
                                 sources = []
                                 g_meta = cand.get("groundingMetadata", {})
                                 if "groundingChunks" in g_meta:
                                     for chunk in g_meta["groundingChunks"]:
                                         if "web" in chunk: sources.append(chunk["web"])
-                                
-                                ph.markdown(bot_text)
                                 session["messages"].append({"role": "assistant", "content": bot_text, "sources": sources})
-                                save_history()
-                                st.rerun()
+                                save_history(); st.rerun()
+                            else: ph.error("No response")
                         else:
-                            error_details = res.json().get("error", {}).get("message", "Unknown Error")
-                            ph.error(f"Error {res.status_code}: {error_details}")
+                            err = res.json().get("error",{}).get("message","Unknown")
+                            ph.error(f"Error {res.status_code}: {err}")
                     except Exception as e:
                         ph.error(f"Exception: {str(e)}")
 
 
 # === Telegram 탭 ===
 with tabs[-1]:
-    tg_configured = all([st.session_state.tg_api_id, st.session_state.tg_api_hash, 
-                         st.session_state.tg_phone, st.session_state.tg_bot_username])
+    tg_ok = all([st.session_state.tg_api_id, st.session_state.tg_api_hash,
+                 st.session_state.tg_phone, st.session_state.tg_bot_username])
     
-    if not tg_configured:
-        st.warning("📱 사이드바에서 Telegram 설정을 먼저 입력하세요.")
-        st.markdown("""
-        **필요한 정보:**
-        1. **API ID** & **API Hash** → [my.telegram.org](https://my.telegram.org) 에서 발급
-        2. **Phone** → 본인 전화번호 (국가코드 포함, 예: +821012345678)
-        3. **Bot Username** → 대화할 Bot (예: @my_bot)
-        """)
+    if not tg_ok:
+        st.markdown("""<div class="empty-state"><div class="icon">📱</div>
+            <div class="title">Telegram Setup Required</div>
+            <div class="sub">Configure credentials in sidebar → 📱 Telegram</div>
+            <div style="margin-top:16px;font-size:12px;color:#d1d5db;">
+                Get API credentials at <a href="https://my.telegram.org" target="_blank">my.telegram.org</a>
+            </div></div>""", unsafe_allow_html=True)
     
     elif st.session_state.tg_auth_status == "CODE_NEEDED":
-        # 인증 코드 입력 UI
-        st.info("📲 Telegram 앱에 전송된 인증 코드를 입력하세요.")
+        st.markdown("""<div class="empty-state"><div class="icon">🔐</div>
+            <div class="title">Enter Verification Code</div>
+            <div class="sub">Check your Telegram app</div></div>""", unsafe_allow_html=True)
         col1, col2 = st.columns([3, 1])
         with col1:
-            tg_code = st.text_input("인증 코드", placeholder="12345", key="tg_auth_code")
+            tg_code = st.text_input("Code", placeholder="12345", key="tg_auth_code", label_visibility="collapsed")
         with col2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("✅ 인증", use_container_width=True):
+            if st.button("✅ Verify", use_container_width=True, type="primary"):
                 if tg_code:
-                    result = tg_verify_code(
-                        st.session_state.tg_api_id,
-                        st.session_state.tg_api_hash,
-                        st.session_state.tg_phone,
-                        tg_code,
-                        st.session_state.tg_code_hash
-                    )
+                    with st.spinner("Verifying..."):
+                        result = tg_verify_code(
+                            st.session_state.tg_api_id, st.session_state.tg_api_hash,
+                            st.session_state.tg_phone, tg_code, st.session_state.tg_code_hash
+                        )
                     if result == "AUTHORIZED":
-                        st.session_state.tg_auth_status = "AUTHORIZED"
-                        st.success("인증 완료!")
-                        st.rerun()
-                    else:
-                        st.error(f"인증 실패: {result}")
+                        st.session_state.tg_auth_status = "AUTHORIZED"; st.rerun()
+                    else: st.error(f"Failed: {result}")
     
     elif st.session_state.tg_auth_status != "AUTHORIZED":
-        st.info("🔗 사이드바에서 'Connect Telegram' 버튼을 눌러 인증을 시작하세요.")
+        st.markdown("""<div class="empty-state"><div class="icon">🔗</div>
+            <div class="title">Click "Connect" in Sidebar</div></div>""", unsafe_allow_html=True)
     
     else:
-        # === 인증 완료 — Telegram 채팅 UI ===
+        # === Telegram 채팅 UI ===
         bot_name = st.session_state.tg_bot_username
-        st.markdown(f"#### 📱 Telegram — `{bot_name}`")
         
-        # 새로고침 + 대화 삭제 버튼
-        tc1, tc2, tc3 = st.columns([1, 1, 4])
+        # 헤더
+        st.markdown(f"""<div class="tg-header">
+            <div class="tg-avatar">🤖</div>
+            <div class="tg-bot-info">
+                <div class="name">{bot_name}</div>
+                <div class="status">● online</div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+        
+        # 툴바
+        tc1, tc2, tc3, tc4 = st.columns([1, 1, 1.5, 4])
         with tc1:
-            if st.button("🔄 새로고침", use_container_width=True, key="tg_refresh"):
-                with st.spinner("불러오는 중..."):
-                    result = tg_get_bot_replies(
-                        st.session_state.tg_api_id,
-                        st.session_state.tg_api_hash,
-                        st.session_state.tg_phone,
-                        st.session_state.tg_bot_username,
-                        limit=100
-                    )
-                    if isinstance(result, list):
-                        st.session_state.tg_messages = result
-                        save_tg_history()
-                        st.rerun()
-                    else:
-                        st.error(f"Error: {result}")
+            do_refresh = st.button("🔄 Refresh", use_container_width=True, key="tg_ref")
         with tc2:
-            if st.button("🗑️ 로그 삭제", use_container_width=True, key="tg_clear"):
-                st.session_state.tg_messages = []
-                save_tg_history()
-                st.rerun()
-        
-        # 자동 새로고침 (60초 간격 — 안전)
+            do_clear = st.button("🗑️ Clear", use_container_width=True, key="tg_clr")
         with tc3:
-            auto_refresh = st.toggle("⚡ 자동 새로고침 (60초)", value=False, key="tg_auto_refresh")
+            auto_on = st.toggle("Auto 60s", value=False, key="tg_auto")
         
-        if auto_refresh:
-            st.markdown("""
-            <script>
-                if (!window._tgAutoRefresh) {
-                    window._tgAutoRefresh = true;
-                    setTimeout(() => {
-                        window._tgAutoRefresh = false;
-                        window.parent.document.querySelectorAll('button').forEach(btn => {
-                            if (btn.innerText.includes('새로고침')) btn.click();
-                        });
-                    }, 60000);
-                }
-            </script>
-            """, unsafe_allow_html=True)
-
-        # 채팅 표시 영역
-        tg_chat_container = st.container(height=chat_window_height, border=False)
+        if do_refresh:
+            with st.spinner("⏳"):
+                if tg_fetch_messages(): st.rerun()
+                else: st.error("Fetch failed")
         
-        with tg_chat_container:
+        if do_clear:
+            st.session_state.tg_messages = []; save_tg_history(); st.rerun()
+        
+        # 자동 갱신 (60초)
+        if auto_on:
+            try:
+                from streamlit_autorefresh import st_autorefresh
+                count = st_autorefresh(interval=60000, limit=None, key="tg_ar")
+                if count > 0:
+                    tg_fetch_messages()
+            except ImportError:
+                # fallback
+                st.markdown("""<script>
+                    if(!window._ar){window._ar=setInterval(()=>{
+                        const b=window.parent.document.querySelectorAll('button');
+                        b.forEach(x=>{if(x.innerText.includes('Refresh'))x.click();});
+                    },60000);}
+                </script>""", unsafe_allow_html=True)
+        
+        # 채팅 영역
+        tg_chat = st.container(height=chat_window_height, border=False)
+        
+        with tg_chat:
             if not st.session_state.tg_messages:
-                st.caption("대화가 없습니다. 아래에 메시지를 입력하거나 🔄 새로고침을 눌러주세요.")
+                st.markdown('<div class="empty-state"><div class="icon">💬</div><div class="sub">No messages yet</div></div>', unsafe_allow_html=True)
             else:
+                html = '<div class="tg-chat-area">'
                 for msg in st.session_state.tg_messages:
-                    if msg.get("from_me"):
-                        # 내가 보낸 메시지 (오른쪽)
-                        st.markdown(f"""
-                        <div class="tg-msg-user">
-                            <div class="tg-msg-text">{msg.get('text', '')}</div>
-                            <div class="tg-msg-time" style="text-align:right;">🧑‍💻 {msg.get('date', '')}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        # Bot 응답 (왼쪽)
-                        st.markdown(f"""
-                        <div class="tg-msg-bot">
-                            <div class="tg-msg-text">{msg.get('text', '')}</div>
-                            <div class="tg-msg-time">🤖 {bot_name} · {msg.get('date', '')}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    text = (msg.get('text','')
+                            .replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+                            .replace('\n','<br>'))
+                    t = msg.get('date','')
+                    cls = "me" if msg.get("from_me") else "bot"
+                    html += f'<div class="tg-row {cls}"><div><div class="tg-bubble {cls}">{text}</div><div class="tg-ts {cls}">{t}</div></div></div>'
+                html += '</div>'
+                st.markdown(html, unsafe_allow_html=True)
         
-        # 메시지 입력
-        if tg_input := st.chat_input("Telegram 메시지 입력...", key="tg_chat_input"):
-            with st.spinner("전송 중..."):
+        # 입력
+        if tg_input := st.chat_input("Message...", key="tg_input"):
+            with st.spinner("Sending..."):
                 result = tg_send_via_user_api(
-                    st.session_state.tg_api_id,
-                    st.session_state.tg_api_hash,
-                    st.session_state.tg_phone,
-                    st.session_state.tg_bot_username,
-                    tg_input
+                    st.session_state.tg_api_id, st.session_state.tg_api_hash,
+                    st.session_state.tg_phone, st.session_state.tg_bot_username, tg_input
                 )
                 if result is True:
-                    # 1차 갱신: 5초 대기 후
-                    import time
-                    time.sleep(5)
-                    
-                    updated = tg_get_bot_replies(
-                        st.session_state.tg_api_id,
-                        st.session_state.tg_api_hash,
-                        st.session_state.tg_phone,
-                        st.session_state.tg_bot_username,
-                        limit=100
-                    )
-                    if isinstance(updated, list):
-                        st.session_state.tg_messages = updated
-                        save_tg_history()
-                    
-                    # 2차 갱신 예약: 30초 후 자동 새로고침 트리거
+                    time.sleep(5)  # 1차 갱신: 5초 대기
+                    tg_fetch_messages()
                     st.session_state.tg_pending_refresh = True
                     st.rerun()
                 else:
-                    st.error(f"전송 실패: {result}")
+                    st.error(f"Failed: {result}")
         
-        # 2차 지연 갱신 (30초 후) — 메시지 전송 직후에만 작동
+        # 2차 갱신 (30초 후)
         if st.session_state.get("tg_pending_refresh", False):
             st.session_state.tg_pending_refresh = False
-            st.markdown("""
-            <script>
-                if (!window._tgDelayedRefresh) {
-                    window._tgDelayedRefresh = true;
-                    setTimeout(() => {
-                        window._tgDelayedRefresh = false;
-                        window.parent.document.querySelectorAll('button').forEach(btn => {
-                            if (btn.innerText.includes('새로고침')) btn.click();
-                        });
-                    }, 30000);
-                }
-            </script>
-            """, unsafe_allow_html=True)
+            st.markdown("""<script>
+                if(!window._dr){window._dr=true;
+                setTimeout(()=>{window._dr=false;
+                    const b=window.parent.document.querySelectorAll('button');
+                    b.forEach(x=>{if(x.innerText.includes('Refresh'))x.click();});
+                },30000);}
+            </script>""", unsafe_allow_html=True)
