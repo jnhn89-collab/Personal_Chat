@@ -81,86 +81,116 @@ def fetch_available_models(api_key):
         return None
 
 # --- Telegram 유틸리티 함수 ---
-def tg_send_message(bot_token, chat_id, text):
-    """Bot API의 sendMessage를 사용하여 메시지를 보냅니다.
-    NOTE: 이 방식은 Bot이 유저에게 보내는 것이므로, 
-    실제로는 Telethon(User API)으로 내 계정에서 Bot에게 보내야 합니다.
-    여기서는 Telethon 기반으로 구현합니다."""
-    pass
+def _run_async(coro):
+    """Streamlit 환경에서 안전하게 async 함수를 실행합니다.
+    Streamlit은 이미 이벤트 루프가 돌고 있을 수 있어서,
+    새 루프를 별도 스레드에서 실행합니다."""
+    result = [None]
+    exception = [None]
+    
+    def runner():
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result[0] = loop.run_until_complete(coro)
+            loop.close()
+        except Exception as e:
+            exception[0] = e
+    
+    t = threading.Thread(target=runner)
+    t.start()
+    t.join(timeout=30)  # 최대 30초 대기
+    
+    if exception[0]:
+        raise exception[0]
+    return result[0]
 
-def tg_get_updates(bot_token, offset=0):
-    """Bot API의 getUpdates로 새 메시지를 가져옵니다."""
-    url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
-    params = {"offset": offset, "timeout": 1, "limit": 50}
-    try:
-        res = requests.get(url, params=params, timeout=5)
-        if res.status_code == 200:
-            return res.json().get("result", [])
-    except:
-        pass
-    return []
-
-def tg_send_via_user_api(api_id, api_hash, phone, bot_username, message):
-    """Telethon을 사용하여 내 계정으로 Bot에게 메시지를 보냅니다."""
-    try:
-        from telethon.sync import TelegramClient
-        session_name = f"session_{phone.replace('+','')}"
-        with TelegramClient(session_name, int(api_id), api_hash) as client:
-            client.send_message(bot_username, message)
-            return True
-    except Exception as e:
-        return str(e)
-
-def tg_get_bot_replies(api_id, api_hash, phone, bot_username, limit=50):
-    """Telethon을 사용하여 Bot과의 대화 내역을 가져옵니다."""
-    try:
-        from telethon.sync import TelegramClient
-        session_name = f"session_{phone.replace('+','')}"
-        messages = []
-        with TelegramClient(session_name, int(api_id), api_hash) as client:
-            for msg in client.iter_messages(bot_username, limit=limit):
-                messages.append({
-                    "id": msg.id,
-                    "text": msg.text or "",
-                    "from_me": msg.out,  # True면 내가 보낸 것
-                    "date": msg.date.strftime("%Y-%m-%d %H:%M:%S") if msg.date else ""
-                })
-        messages.reverse()  # 오래된 순으로 정렬
-        return messages
-    except Exception as e:
-        return str(e)
+def _get_session_name(phone):
+    return f"session_{phone.replace('+','').replace(' ','')}"
 
 def tg_authenticate(api_id, api_hash, phone):
-    """Telethon 세션 인증을 시작합니다. 코드 입력이 필요할 수 있습니다."""
+    """Telethon 세션 인증을 시작합니다."""
     try:
-        from telethon.sync import TelegramClient
-        session_name = f"session_{phone.replace('+','')}"
-        client = TelegramClient(session_name, int(api_id), api_hash)
-        client.connect()
+        from telethon import TelegramClient
         
-        if not client.is_user_authorized():
-            client.send_code_request(phone)
-            client.disconnect()
-            return "CODE_NEEDED"
+        async def _auth():
+            session_name = _get_session_name(phone)
+            client = TelegramClient(session_name, int(api_id), api_hash)
+            await client.connect()
+            
+            if not await client.is_user_authorized():
+                await client.send_code_request(phone)
+                await client.disconnect()
+                return "CODE_NEEDED"
+            
+            await client.disconnect()
+            return "AUTHORIZED"
         
-        client.disconnect()
-        return "AUTHORIZED"
+        return _run_async(_auth())
     except Exception as e:
         return f"ERROR: {str(e)}"
 
 def tg_verify_code(api_id, api_hash, phone, code):
     """인증 코드로 로그인을 완료합니다."""
     try:
-        from telethon.sync import TelegramClient
-        session_name = f"session_{phone.replace('+','')}"
-        client = TelegramClient(session_name, int(api_id), api_hash)
-        client.connect()
-        client.sign_in(phone, code)
-        authorized = client.is_user_authorized()
-        client.disconnect()
-        return "AUTHORIZED" if authorized else "FAILED"
+        from telethon import TelegramClient
+        
+        async def _verify():
+            session_name = _get_session_name(phone)
+            client = TelegramClient(session_name, int(api_id), api_hash)
+            await client.connect()
+            await client.sign_in(phone, code)
+            authorized = await client.is_user_authorized()
+            await client.disconnect()
+            return "AUTHORIZED" if authorized else "FAILED"
+        
+        return _run_async(_verify())
     except Exception as e:
         return f"ERROR: {str(e)}"
+
+def tg_send_via_user_api(api_id, api_hash, phone, bot_username, message):
+    """내 계정으로 Bot에게 메시지를 보냅니다."""
+    try:
+        from telethon import TelegramClient
+        
+        async def _send():
+            session_name = _get_session_name(phone)
+            client = TelegramClient(session_name, int(api_id), api_hash)
+            await client.connect()
+            await client.send_message(bot_username, message)
+            await client.disconnect()
+            return True
+        
+        return _run_async(_send())
+    except Exception as e:
+        return str(e)
+
+def tg_get_bot_replies(api_id, api_hash, phone, bot_username, limit=50):
+    """Bot과의 대화 내역을 가져옵니다."""
+    try:
+        from telethon import TelegramClient
+        
+        async def _get_messages():
+            session_name = _get_session_name(phone)
+            client = TelegramClient(session_name, int(api_id), api_hash)
+            await client.connect()
+            
+            messages = []
+            async for msg in client.iter_messages(bot_username, limit=limit):
+                messages.append({
+                    "id": msg.id,
+                    "text": msg.text or "",
+                    "from_me": msg.out,
+                    "date": msg.date.strftime("%Y-%m-%d %H:%M:%S") if msg.date else ""
+                })
+            
+            await client.disconnect()
+            messages.reverse()
+            return messages
+        
+        return _run_async(_get_messages())
+    except Exception as e:
+        return str(e)
 
 
 # --- 3. 핵심: Base64 클립보드 복사 스크립트 ---
@@ -347,20 +377,23 @@ with st.sidebar:
                         st.session_state.tg_phone, st.session_state.tg_bot_username])
         
         if st.button("🔗 Connect Telegram", use_container_width=True, disabled=not tg_ready):
-            with st.spinner("Connecting..."):
-                result = tg_authenticate(
-                    st.session_state.tg_api_id,
-                    st.session_state.tg_api_hash,
-                    st.session_state.tg_phone
-                )
-                st.session_state.tg_auth_status = result
-                if result == "AUTHORIZED":
-                    st.success("Connected!")
-                elif result == "CODE_NEEDED":
-                    st.info("Telegram 앱에서 인증 코드를 확인하세요.")
-                else:
-                    st.error(result)
+            try:
+                with st.spinner("Connecting to Telegram..."):
+                    result = tg_authenticate(
+                        st.session_state.tg_api_id,
+                        st.session_state.tg_api_hash,
+                        st.session_state.tg_phone
+                    )
+                    st.session_state.tg_auth_status = result
+                    if result == "AUTHORIZED":
+                        st.success("✅ Connected!")
+                    elif result == "CODE_NEEDED":
+                        st.info("📲 Telegram 앱에서 인증 코드를 확인하세요.")
+                    else:
+                        st.error(f"❌ {result}")
                 st.rerun()
+            except Exception as e:
+                st.error(f"❌ Connection failed: {str(e)}")
 
     st.divider()
     
